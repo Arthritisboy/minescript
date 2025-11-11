@@ -63,15 +63,22 @@ def check_for_t_press():
     return False
 
 
-def gravel_check(yaw, pitch=20):
-    """Fast gravel check without orientation setting"""
+def gravel_check(yaw, pitch):
+    """Fast gravel check for both pitch angles (0 and 20)"""
     if not mining_active:
         return False
         
+    # Set orientation to ensure we're looking at the right spot
+    m.player_set_orientation(yaw, pitch)
+    wait_ticks(1)  # 1 tick for orientation to settle
+    
     targeted_block = m.player_get_targeted_block(max_distance=5)
     
     if targeted_block and targeted_block.type:
-        return "gravel" in targeted_block.type.lower()
+        is_gravel = "gravel" in targeted_block.type.lower()
+        if is_gravel:
+            m.echo(f"Gravel detected at pitch {pitch}! Switching to shovel.")
+        return is_gravel
     return False
 
 
@@ -79,7 +86,8 @@ def gravel_mine():
     """ULTRA-FAST gravel handling using ticks"""
     if not mining_active:
         return
-        
+    
+    m.player_press_forward(False)
     # Switch to shovel (hotbar slot 9)
     m.press_key_bind("key.hotbar.9", True)
     wait_ticks(1)  # 1 tick = 0.05 seconds
@@ -87,7 +95,7 @@ def gravel_mine():
     
     # Mine quickly
     m.player_press_attack(True)
-    wait_ticks(16)  # 16 ticks = 0.8 seconds
+    wait_ticks(20)  # 20 ticks = 1 second
     m.player_press_attack(False)
     
     # Switch back to pickaxe (hotbar slot 1)
@@ -95,6 +103,7 @@ def gravel_mine():
         m.press_key_bind("key.hotbar.1", True)
         wait_ticks(1)  # 1 tick = 0.05 seconds
         m.press_key_bind("key.hotbar.1", False)
+        m.player_press_forward(True)
 
 def check_for_lava():
     """PROPER lava detection - checks actual block positions in front"""
@@ -201,7 +210,9 @@ def mine_at_angle(yaw, pitch, check_gravel=True):
         
     m.player_set_orientation(yaw, pitch)
 
-    if check_gravel and pitch == 20 and mining_active:
+    # Check for gravel initially for both pitch angles
+    if check_gravel and mining_active and pitch in [0, 20]:
+        # Initial gravel check
         if gravel_check(yaw, pitch):
             gravel_mine()
             return True
@@ -223,7 +234,7 @@ def mine_at_angle(yaw, pitch, check_gravel=True):
         if not original_block_type or original_block_type == "minecraft:air":
             return False
         
-        # Mine until the block breaks
+        # Mine until the block breaks, with continuous gravel checking for both pitches
         m.player_press_attack(True)
         
         start_ticks = 0
@@ -232,6 +243,15 @@ def mine_at_angle(yaw, pitch, check_gravel=True):
         while mining_active and start_ticks < max_mining_ticks:
             if check_for_t_press():
                 break
+                
+            # CONTINUOUS GRAVEL CHECK - if targeted block changes to gravel for either pitch
+            if check_gravel and pitch in [0, 20]:
+                current_targeted_block = m.player_get_targeted_block(max_distance=5)
+                if current_targeted_block and current_targeted_block.type and "gravel" in current_targeted_block.type.lower():
+                    m.player_press_attack(False)  # Stop current mining
+                    wait_ticks(1)  # 1 tick pause
+                    gravel_mine()  # Use shovel for gravel
+                    return True
                 
             # Check if the block is now air (broken)
             current_block_type = m.getblock(target_x, target_y, target_z)
@@ -555,9 +575,9 @@ def perform_strip_mining():
     if mining_active:
         m.player_press_forward(True)
     
-    # First set of mining steps with targeting (4 steps)
+    # First set of mining steps with targeting (4 steps) - enable gravel check for both pitches
     mining_steps = [
-        (yaw, 0, False), (yaw, 20, True), (yaw, 0, False), (yaw, 20, True)
+        (yaw, 0, True), (yaw, 20, True), (yaw, 0, True), (yaw, 20, True)  # All check for gravel now
     ]
     
     for step_yaw, step_pitch, check_gravel in mining_steps:
@@ -573,7 +593,7 @@ def perform_strip_mining():
             emergency_lava_stop()
             return False
             
-        # Use targeting-based mining
+        # Use targeting-based mining with gravel checking for both pitches
         mine_at_angle(step_yaw, step_pitch, check_gravel)
         
         # QUICK ore scan
@@ -585,9 +605,9 @@ def perform_strip_mining():
     if mining_active:
         m.player_press_forward(False)
     
-    # Second set of mining steps with targeting (2 steps)
+    # Second set of mining steps with targeting (2 steps) - enable gravel check for both pitches
     if mining_active:
-        mining_steps_2 = [(yaw, 0, False), (yaw, 20, True)]
+        mining_steps_2 = [(yaw, 0, True), (yaw, 20, True)]  # Both check for gravel
         for step_yaw, step_pitch, check_gravel in mining_steps_2:
             if not mining_active:
                 break
@@ -613,9 +633,9 @@ def perform_strip_mining():
     if mining_active:
         m.player_press_forward(True)
     
-    # Third set of mining steps with targeting (4 steps)
+    # Third set of mining steps with targeting (4 steps) - enable gravel check for both pitches
     if mining_active:
-        mining_steps_3 = [(yaw, 0, False), (yaw, 20, True), (yaw, 0, False), (yaw, 20, True)]
+        mining_steps_3 = [(yaw, 0, True), (yaw, 20, True), (yaw, 0, True), (yaw, 20, True)]  # All check for gravel
         for step_yaw, step_pitch, check_gravel in mining_steps_3:
             if not mining_active:
                 break
@@ -638,9 +658,9 @@ def perform_strip_mining():
     if mining_active:
         m.player_press_forward(False)
     
-    # Fourth set of mining steps with targeting (2 steps)
+    # Fourth set of mining steps with targeting (2 steps) - enable gravel check for both pitches
     if mining_active:
-        mining_steps_4 = [(yaw, 0, False), (yaw, 20, True)]
+        mining_steps_4 = [(yaw, 0, True), (yaw, 20, True)]  # Both check for gravel
         for step_yaw, step_pitch, check_gravel in mining_steps_4:
             if not mining_active:
                 break
