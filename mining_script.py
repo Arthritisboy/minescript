@@ -36,6 +36,10 @@ previous_target = m.player_position()
 # Global flag to control the mining loop
 mining_active = True
 recently_mined_positions = set()  # Track recently mined positions to avoid repeats
+original_y_level = None  # Track original Y level
+fall_recovery_active = False  # Track if we're in fall recovery mode
+last_y_check_time = 0
+y_check_interval = 0.5  # Check Y level every 0.5 seconds
 
 def wait_ticks(ticks):
     """Wait for specified number of Minecraft ticks (20 ticks = 1 second)"""
@@ -61,7 +65,6 @@ def check_for_t_press():
         stop_mining()
         return True
     return False
-
 
 def gravel_check(yaw, pitch):
     """Ultra-fast gravel check with instant rotation"""
@@ -154,6 +157,124 @@ def check_for_lava():
             return True
     
     return False
+
+def check_and_recover_from_fall(locked_yaw, locked_pitch):
+    """Check if player fell and attempt to recover by jumping for 3 seconds"""
+    global mining_active, original_y_level, fall_recovery_active
+    
+    if not mining_active or fall_recovery_active:
+        return True  # Return True to continue if we're already in recovery
+        
+    current_y = m.player_position()[1]
+    
+    # If we haven't set the original Y level yet, set it now
+    if original_y_level is None:
+        original_y_level = current_y
+        m.echo(f"📏 Original Y level set to: {original_y_level:.1f}")
+        return True
+    
+    # Check if we fell more than 1 block
+    y_difference = original_y_level - current_y
+    if y_difference >= 1.0:
+        m.echo(f"⚠️ Fall detected! Current Y: {current_y:.1f}, Original Y: {original_y_level:.1f} (difference: {y_difference:.1f}). Attempting recovery...")
+        fall_recovery_active = True
+        
+        # CRITICAL: Stop ALL movement immediately
+        m.player_press_forward(False)
+        m.player_press_sneak(False)
+        m.player_press_attack(False)
+        m.player_press_backward(False)
+        
+        # Wait a moment to ensure movement stops
+        time.sleep(0.2)
+        
+        # Look towards the original mining direction
+        aim.player_aim.instant_rotate_to(locked_yaw, locked_pitch)
+        time.sleep(0.1)
+        
+        # Attempt to jump for 3 seconds
+        recovery_start_time = time.time()
+        max_recovery_time = 3.0  # 3 seconds
+        
+        recovery_successful = False
+        jump_count = 0
+        
+        m.echo("🔄 Starting jump recovery...")
+        
+        while mining_active and (time.time() - recovery_start_time) < max_recovery_time:
+            if check_for_t_press():
+                break
+                
+            # Press forward to try to move out of the hole
+            m.player_press_forward(True)
+            
+            # Jump repeatedly
+            m.player_press_jump(True)
+            time.sleep(0.15)  # Hold jump for 0.15 seconds
+            m.player_press_jump(False)
+            time.sleep(0.1)   # Short pause between jumps
+            
+            # Check if we recovered
+            current_y = m.player_position()[1]
+            if current_y == original_y_level:  
+                recovery_successful = True
+                m.echo("✅ Successfully recovered from fall! Continuing mining.")
+                break
+                
+            jump_count += 1
+            if jump_count % 3 == 0:  # Update every 3 jumps
+                m.echo(f"🔄 Jump {jump_count}, Current Y: {current_y:.1f}, Target: {original_y_level:.1f}")
+        
+        # Stop all movement after recovery attempt
+        m.player_press_forward(False)
+        m.player_press_jump(False)
+        fall_recovery_active = False
+        
+        if recovery_successful:
+            # Resume mining position
+            time.sleep(0.5)  # Let player stabilize
+            m.player_press_sneak(True)
+            time.sleep(0.2)
+            # Update original Y level to new position if close enough
+            current_y = m.player_position()[1]
+            original_y_level = current_y
+            m.echo(f"📏 Updated Y level to: {original_y_level:.1f}")
+            return True
+        else:
+            current_y = m.player_position()[1]
+            m.echo(f"❌ Failed to recover from fall after 3 seconds. Current Y: {current_y:.1f}, Original: {original_y_level:.1f}. Stopping script.")
+            stop_mining()
+            return False
+    
+    return True
+
+def monitor_fall_continuously(locked_yaw, locked_pitch):
+    """Continuous fall monitoring that runs in parallel with mining"""
+    global mining_active, original_y_level, fall_recovery_active, last_y_check_time
+    
+    current_time = time.time()
+    if current_time - last_y_check_time < y_check_interval:
+        return True
+        
+    last_y_check_time = current_time
+    
+    if not mining_active or fall_recovery_active:
+        return True
+        
+    if original_y_level is None:
+        return True
+        
+    current_y = m.player_position()[1]
+    y_difference = original_y_level - current_y
+    
+    # Trigger on any Y change >= 1 block
+    if y_difference >= 1.0:
+        m.echo(f"🔍 Fall monitor triggered: Y difference {y_difference:.1f}")
+        # Force immediate recovery - don't return until recovery is complete
+        recovery_result = check_and_recover_from_fall(locked_yaw, locked_pitch)
+        return recovery_result
+    
+    return True
 
 def get_facing_direction(yaw):
     """Convert yaw to cardinal direction for strip mining"""
@@ -593,20 +714,28 @@ def return_to_position(target_position, target_orientation):
 
 
 def perform_strip_mining():
-    """Perform strip mining using smooth aiming system for better block detection"""
+    """Perform strip mining with continuous fall detection"""
+    global original_y_level
+    
     if not mining_active:
         return False
         
     # Lock to cardinal direction and center pitch at start of each cycle
     locked_yaw, locked_pitch = lock_to_cardinal_direction()
     
+    # Set original Y level if not set
+    if original_y_level is None:
+        original_y_level = m.player_position()[1]
+        m.echo(f"📏 Original Y level set to: {original_y_level:.1f}")
+    
     if mining_active:
         m.player_press_sneak(True)
-        wait_ticks(1)  # 1 tick
+        wait_ticks(1)
+    
+    if mining_active:
         m.player_press_forward(True)
     
-    
-    # First set of mining steps with smooth aiming (4 steps)
+    # First set of mining steps with targeting (4 steps)
     mining_steps = [
         (locked_yaw, 0, True), (locked_yaw, 20, True), (locked_yaw, 0, True), (locked_yaw, 20, True)
     ]
@@ -617,6 +746,10 @@ def perform_strip_mining():
         if check_for_t_press():
             break
         
+        # CONTINUOUS FALL DETECTION CHECK
+        if not monitor_fall_continuously(locked_yaw, locked_pitch):
+            return False
+        
         # LAVA CHECK
         if check_for_lava():
             m.echo("LAVA DETECTED! Stopping strip mining.")
@@ -624,10 +757,8 @@ def perform_strip_mining():
             emergency_lava_stop()
             return False
             
-        # Use smooth aiming-based mining with gravel checking for both pitches
         mine_at_angle(step_yaw, step_pitch, check_gravel)
         
-        # QUICK ore scan
         if mining_active and ore_check():
             m.player_press_forward(False)
             return True
@@ -635,7 +766,7 @@ def perform_strip_mining():
     if mining_active:
         m.player_press_forward(False)
     
-    # Second set of mining steps with smooth aiming (2 steps)
+    # Second set of mining steps
     if mining_active:
         mining_steps_2 = [(locked_yaw, 0, True), (locked_yaw, 20, True)]
         for step_yaw, step_pitch, check_gravel in mining_steps_2:
@@ -644,7 +775,10 @@ def perform_strip_mining():
             if check_for_t_press():
                 break
             
-            # LAVA CHECK
+            # CONTINUOUS FALL DETECTION CHECK
+            if not monitor_fall_continuously(locked_yaw, locked_pitch):
+                return False
+            
             if check_for_lava():
                 m.echo("LAVA DETECTED! Stopping strip mining.")
                 m.player_press_forward(False)
@@ -657,7 +791,7 @@ def perform_strip_mining():
                 m.player_press_forward(False)
                 return True
     
-    # Third set of mining steps with smooth aiming (4 steps)
+    # Third set of mining steps
     if mining_active:
         m.player_press_forward(True)
         mining_steps_3 = [(locked_yaw, 0, True), (locked_yaw, 20, True), (locked_yaw, 0, True), (locked_yaw, 20, True)]
@@ -667,7 +801,10 @@ def perform_strip_mining():
             if check_for_t_press():
                 break
             
-            # LAVA CHECK
+            # CONTINUOUS FALL DETECTION CHECK
+            if not monitor_fall_continuously(locked_yaw, locked_pitch):
+                return False
+            
             if check_for_lava():
                 m.echo("LAVA DETECTED! Stopping strip mining.")
                 m.player_press_forward(False)
@@ -683,7 +820,7 @@ def perform_strip_mining():
     if mining_active:
         m.player_press_forward(False)
     
-    # Fourth set of mining steps with smooth aiming (2 steps)
+    # Fourth set of mining steps
     if mining_active:
         mining_steps_4 = [(locked_yaw, 0, True), (locked_yaw, 20, True)]
         for step_yaw, step_pitch, check_gravel in mining_steps_4:
@@ -692,7 +829,10 @@ def perform_strip_mining():
             if check_for_t_press():
                 break
             
-            # LAVA CHECK
+            # CONTINUOUS FALL DETECTION CHECK
+            if not monitor_fall_continuously(locked_yaw, locked_pitch):
+                return False
+            
             if check_for_lava():
                 m.echo("LAVA DETECTED! Stopping strip mining.")
                 m.player_press_forward(False)
@@ -705,35 +845,25 @@ def perform_strip_mining():
                 m.player_press_forward(False)
                 return True
     
-    # FINAL STEP - Return to center pitch with smooth aiming
+    # Final step
     if mining_active:
         m.player_press_attack(False)
-        aim.player_aim.smooth_rotate_to(locked_yaw, 0, duration=0.1)
+        aim.player_aim.hybrid_rotate_to(locked_yaw, 0, fast_threshold=15.0)
+        wait_ticks(1)
         
-    
-    # Final forward movement (3 steps)
-    if mining_active:
-        m.player_press_forward(True)
-        for i in range(3): 
-            if not mining_active:
-                m.player_press_forward(False)
-                break
-            if check_for_t_press():
-                m.player_press_forward(False)
-                break
+        if check_for_t_press():
+            m.player_press_forward(False)
+            return False
             
             # LAVA CHECK
-            if check_for_lava():
-                m.echo("LAVA DETECTED! Stopping strip mining.")
-                m.player_press_forward(False)
-                emergency_lava_stop()
-                return False
-                
-            wait_ticks(1)  # 1 tick per forward step
+        if check_for_lava():
+            m.echo("LAVA DETECTED! Stopping strip mining.")
+            m.player_press_forward(False)
+            emergency_lava_stop()
+            return False
         
-        # Clean up - ensure attack is released
         m.player_press_forward(False)
-        m.player_press_attack(False)  # Ensure attack is released
+        m.player_press_attack(False)
     
     return False
 
@@ -924,19 +1054,22 @@ def ore_check():
 
 def mining_time():
     """Main mining loop using tick-based timing"""
-    global mining_active, previous_target, recently_mined_positions
+    global mining_active, previous_target, recently_mined_positions, original_y_level, fall_recovery_active, last_y_check_time
     
     mining_active = True
     previous_target = m.player_position()
     recently_mined_positions.clear()
+    original_y_level = None
+    fall_recovery_active = False
+    last_y_check_time = time.time()
     
     # Lock to cardinal direction at start
     lock_to_cardinal_direction()
     
     # Convert time intervals to tick intervals
-    ore_check_interval_ticks = 30  # 1.5 seconds in ticks
-    chat_check_interval_ticks = 3  # 0.15 seconds in ticks
-    lava_check_interval_ticks = 6  # 0.3 seconds in ticks
+    ore_check_interval_ticks = 30
+    chat_check_interval_ticks = 3
+    lava_check_interval_ticks = 6
     
     last_ore_check_ticks = 0
     last_chat_check_ticks = 0
@@ -944,9 +1077,9 @@ def mining_time():
     current_tick = 0
     
     m.player_press_sneak(True)
-    wait_ticks(2)  # 2 ticks = 0.1 seconds
+    wait_ticks(2)
     
-    m.echo("Press T to stop.")
+    m.echo("Press T to stop. Fall detection active.")
     
     try:
         while mining_active:
@@ -970,7 +1103,7 @@ def mining_time():
             ore_mined_in_cycle = perform_strip_mining()
             
             if ore_mined_in_cycle:
-                last_ore_check_ticks = current_tick + 30  # Wait 1.5 seconds (30 ticks)
+                last_ore_check_ticks = current_tick + 30
                 continue
             
             # Less frequent full ore vein scans
@@ -981,11 +1114,11 @@ def mining_time():
                 if random.random() < 0.4:
                     vein_mined = mine_ore_vein_continuous()
                     if vein_mined:
-                        last_ore_check_ticks = current_tick + 40  # Wait 2 seconds (40 ticks)
+                        last_ore_check_ticks = current_tick + 40
                     else:
                         last_ore_check_ticks = current_tick
                 else:
-                    last_ore_check_ticks = current_tick + 10  # Wait 0.5 seconds (10 ticks)
+                    last_ore_check_ticks = current_tick + 10
             
             # Small tick delay to prevent CPU overload
             wait_ticks(1)
@@ -995,6 +1128,7 @@ def mining_time():
         m.player_press_forward(False)
         m.player_press_attack(False)
         m.player_press_backward(False)
+        m.player_press_jump(False)  # Ensure jump is released
         m.echo("Mining script stopped completely.")
 
 # Start the mining script immediately
