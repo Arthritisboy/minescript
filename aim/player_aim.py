@@ -14,20 +14,16 @@ def fast_ease_in_out(t: float) -> float:
         t = 2.0 * t - 1.0
         return 0.5 * (1.0 - (1.0 - t) * (1.0 - t)) + 0.5
 
-def smooth_rotate_to(target_yaw: float, target_pitch: float, duration: float = 0.08, step: float = 0.01):
-    """ULTRA-FAST smooth rotation with minimal delay"""
+def ultra_fast_rotate_to(target_yaw: float, target_pitch: float, duration: float = 0.03, step: float = 0.005):
+    """Maximum speed smooth rotation"""
     current_yaw, current_pitch = m.player_orientation()
     
-    # Normalize angles to handle wraparound
-    current_yaw = current_yaw % 360
-    target_yaw = target_yaw % 360
-    
-    # Calculate shortest path for yaw
+    # Calculate shortest path
     yaw_diff = ((target_yaw - current_yaw + 180) % 360) - 180
     pitch_diff = target_pitch - current_pitch
     
-    # For very small angles, do instant rotation
-    if abs(yaw_diff) < 2.0 and abs(pitch_diff) < 2.0:
+    # Instant for very small angles
+    if abs(yaw_diff) < 1.0 and abs(pitch_diff) < 1.0:
         m.player_set_orientation(target_yaw, target_pitch)
         return
     
@@ -35,17 +31,13 @@ def smooth_rotate_to(target_yaw: float, target_pitch: float, duration: float = 0
     
     for i in range(steps + 1):
         t = i / steps
-        # Use linear easing for maximum speed
-        f = linear_ease(t)
-        
-        y = current_yaw + yaw_diff * f
-        p = current_pitch + pitch_diff * f
+        y = current_yaw + yaw_diff * t  # Pure linear, no easing
+        p = current_pitch + pitch_diff * t
         
         m.player_set_orientation(y % 360.0, p)
         
-        # Minimal sleep for fastest movement
-        if i < steps:  # Don't sleep on the last step
-            time.sleep(step)
+        if i < steps:
+            time.sleep(step)  # Minimal sleep
 
 def hybrid_rotate_to(target_yaw: float, target_pitch: float, fast_threshold: float = 10.0):
     """Hybrid approach: instant for small moves, fast smooth for larger moves"""
@@ -54,9 +46,7 @@ def hybrid_rotate_to(target_yaw: float, target_pitch: float, fast_threshold: flo
     yaw_diff = abs(((target_yaw - current_yaw + 180) % 360) - 180)
     pitch_diff = abs(target_pitch - current_pitch)
     
-    # If the angle change is small, use instant rotation
     if yaw_diff < fast_threshold and pitch_diff < fast_threshold:
-        smooth_rotate_to(target_yaw, target_pitch)
+        ultra_fast_rotate_to(target_yaw, target_pitch)
     else:
-        # Use very fast smooth rotation for larger moves
-        smooth_rotate_to(target_yaw, target_pitch)
+        ultra_fast_rotate_to(target_yaw, target_pitch)

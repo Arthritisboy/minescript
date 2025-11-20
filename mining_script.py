@@ -71,7 +71,7 @@ def gravel_check(yaw, pitch):
     if not mining_active:
         return False
         
-    aim.player_aim.smooth_rotate_to(yaw, pitch)
+    aim.player_aim.ultra_fast_rotate_to(yaw, pitch)
     
     targeted_block = m.player_get_targeted_block(max_distance=5)
     
@@ -187,7 +187,7 @@ def check_and_recover_from_fall(locked_yaw, locked_pitch):
         time.sleep(0.2)
         
         # Look towards the original mining direction
-        aim.player_aim.smooth_rotate_to(locked_yaw, locked_pitch)
+        aim.player_aim.ultra_fast_rotate_to(locked_yaw, locked_pitch)
         time.sleep(0.1)
         
         # Attempt to jump for 3 seconds
@@ -318,7 +318,7 @@ def lock_to_cardinal_direction():
     # Center pitch to 0 (straight ahead)
     target_pitch = 0
     
-    aim.player_aim.smooth_rotate_to(target_yaw, target_pitch)
+    aim.player_aim.ultra_fast_rotate_to(target_yaw, target_pitch)
     return target_yaw, target_pitch
 
 def emergency_lava_stop():
@@ -368,7 +368,7 @@ def mine_at_angle(yaw, pitch, check_gravel=True):
     
     if mining_active:
         # Get the targeted block position before mining
-        targeted_block = m.player_get_targeted_block(max_distance=5)
+        targeted_block = m.player_get_targeted_block(max_distance=0.5)
         if not targeted_block or not targeted_block.position:
             # No block targeted, just do a quick mine
             m.player_press_attack(True)
